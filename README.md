@@ -10,6 +10,12 @@
 <br />
 <div align="center">
 
+  <p>
+    <img src="https://raw.githubusercontent.com/meshtastic/design/refs/heads/master/Meshtastic%20Powered%20Logo/M-POWERED.png" alt="Powered by Meshtastic" height="100" width="100">
+    &nbsp;&nbsp;&nbsp;&nbsp;
+    <img src="https://docs.openwebui.com/assets/files/open-webui-logo-a5024b13d950315f75cf406700bbd404.png" style="border-radius: 12.5px" alt="Open WebUI" height="100" width="100">
+  </p>
+
   <h1>LoRa Mesh Assistant</h1>
 
   <h3>Conversational Diagnostics &amp; RF Planning for Meshtastic®</h3>
