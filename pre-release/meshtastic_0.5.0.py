@@ -1,10 +1,10 @@
 """
 title: Meshtastic
 author: James Beeching
-version: 0.4.0
+version: 0.5.0
 license: GPLv3
-description: Feature-rich Open WebUI Workspace Tool for Meshtastic diagnostics, safe administration and RF/link/terrain planning over Wi-Fi/TCP.
-requirements: meshtastic==2.7.11
+description: Feature-rich Open WebUI Workspace Tool for Meshtastic diagnostics, safe administration, RF/link/terrain planning and mesh topology visualisation over Wi-Fi/TCP.
+requirements: meshtastic==2.7.11,networkx==3.4.2,pyvis==0.3.2
 """
 
 from __future__ import annotations
@@ -21,10 +21,12 @@ from datetime import datetime, timezone
 from importlib.metadata import PackageNotFoundError, version as package_version
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+import networkx as nx
 from google.protobuf.descriptor import FieldDescriptor
 from google.protobuf.json_format import MessageToDict
 from google.protobuf.message import Message
 from pydantic import BaseModel, Field
+from pyvis.network import Network
 
 from meshtastic import BROADCAST_ADDR
 from meshtastic.protobuf import channel_pb2, mesh_pb2, portnums_pb2, telemetry_pb2
@@ -285,11 +287,37 @@ class Tools:
             default="srtm30m,mapzen,etopo1",
             description="OpenTopoData dataset stack. The default prefers ~30 m SRTM, then global fallbacks.",
         )
+        rf_terrain_self_hosted: bool = Field(
+            default=False,
+            description="Treat the configured OpenTopoData-compatible service as self-hosted. Public mode always caps requests at 100 samples; self-hosted mode may use rf_terrain_max_samples.",
+        )
+        rf_terrain_sampling_mode: str = Field(
+            default="adaptive",
+            description="Terrain sampling mode: 'adaptive' chooses samples from path length and target spacing; 'fixed' uses rf_terrain_samples.",
+        )
+        rf_terrain_target_spacing_m: float = Field(
+            default=25.0,
+            ge=1.0,
+            le=10000.0,
+            description="Target spacing between terrain samples in adaptive mode. About 20-30 m is a sensible match for SRTM30m; finer values do not create detail absent from the source DEM.",
+        )
+        rf_terrain_min_samples: int = Field(
+            default=64,
+            ge=8,
+            le=20000,
+            description="Minimum number of terrain samples in adaptive mode, subject to the effective request cap.",
+        )
+        rf_terrain_max_samples: int = Field(
+            default=2000,
+            ge=8,
+            le=20000,
+            description="Maximum samples the tool may request from a self-hosted terrain server. Configure OpenTopoData max_locations_per_request to at least this value. Public mode still caps at 100.",
+        )
         rf_terrain_samples: int = Field(
             default=64,
             ge=8,
-            le=100,
-            description="Number of equally spaced terrain samples per link. Public OpenTopoData allows at most 100 locations per request.",
+            le=20000,
+            description="Fixed terrain sample count used only when rf_terrain_sampling_mode='fixed'. Public mode still caps at 100.",
         )
         rf_terrain_timeout_seconds: float = Field(
             default=10.0,
@@ -302,6 +330,24 @@ class Tools:
             ge=0.5,
             le=5.0,
             description="Effective-Earth-radius k factor used for path curvature. 4/3 is a common planning approximation, not a guarantee of atmospheric conditions.",
+        )
+
+        # Mesh topology diagram. Read-only and no more sensitive than
+        # get_mesh_health - it never touches lat/lon, only relative
+        # hop-count geometry, so it is not gated behind a permission Valve.
+        topology_max_nodes: int = Field(
+            default=60,
+            ge=2,
+            le=250,
+            description="Maximum number of active NodeDB peers to include in the mesh topology diagram.",
+        )
+        topology_render_interactive: bool = Field(
+            default=True,
+            description="Push an interactive vis.js network diagram directly into the chat via the Open WebUI message event, in addition to the JSON summary returned to the model. Disable to return JSON only.",
+        )
+        topology_vis_js_source: str = Field(
+            default="remote",
+            description="Where the diagram's vis-network JavaScript comes from: 'remote' emits a small (~10 KB) page that fetches vis-network from a CDN inside the sandboxed chat preview; 'in_line' embeds the full library (~700 KB) directly in the message so the diagram still renders if the preview blocks external scripts.",
         )
 
         redact_secrets: bool = Field(
@@ -1117,11 +1163,58 @@ class Tools:
                     return float(value), "known remote profile"
         return float(fallback), "unknown treated as zero"
 
+    def _rf_terrain_sampling_plan(
+        self,
+        a: Tuple[float, float],
+        b: Tuple[float, float],
+        samples: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        distance_km = self._rf_haversine_km(a, b)
+        distance_m = max(0.0, distance_km * 1000.0)
+        mode = str(self.valves.rf_terrain_sampling_mode or "adaptive").strip().casefold()
+        if mode not in {"adaptive", "fixed"}:
+            raise ValueError("rf_terrain_sampling_mode must be 'adaptive' or 'fixed'")
+
+        self_hosted = bool(self.valves.rf_terrain_self_hosted)
+        configured_max = max(8, int(self.valves.rf_terrain_max_samples))
+        effective_cap = configured_max if self_hosted else min(100, configured_max)
+
+        if samples is not None:
+            requested = int(samples)
+            source = "explicit function argument"
+        elif mode == "fixed":
+            requested = int(self.valves.rf_terrain_samples)
+            source = "fixed rf_terrain_samples"
+        else:
+            spacing = max(1.0, float(self.valves.rf_terrain_target_spacing_m))
+            # N samples create N-1 intervals, so add one endpoint sample.
+            requested = int(math.ceil(distance_m / spacing)) + 1
+            requested = max(int(self.valves.rf_terrain_min_samples), requested)
+            source = f"adaptive target spacing ~{spacing:g} m"
+
+        requested = max(8, requested)
+        sample_count = min(requested, effective_cap)
+        actual_spacing_m = distance_m / max(1, sample_count - 1) if distance_m > 0 else 0.0
+
+        return {
+            "mode": mode,
+            "source": source,
+            "distanceKm": round(distance_km, 3),
+            "requestedSamples": requested,
+            "sampleCount": sample_count,
+            "effectiveRequestCap": effective_cap,
+            "configuredSelfHostedMax": configured_max,
+            "selfHosted": self_hosted,
+            "clamped": sample_count < requested,
+            "approximateSpacingM": round(actual_spacing_m, 2),
+            "publicSafetyCapApplied": not self_hosted,
+        }
+
     def _rf_fetch_terrain_profile(self, a: Tuple[float, float], b: Tuple[float, float], samples: Optional[int] = None) -> Dict[str, Any]:
         if not self.valves.rf_allow_external_terrain_requests:
-            raise PermissionError("External terrain requests are disabled. Enable rf_allow_external_terrain_requests or use a self-hosted elevation service.")
-        sample_count = int(samples or self.valves.rf_terrain_samples)
-        sample_count = max(8, min(100, sample_count))
+            raise PermissionError("Terrain requests are disabled. Enable rf_allow_external_terrain_requests after choosing a trusted public or self-hosted elevation service.")
+        sampling = self._rf_terrain_sampling_plan(a, b, samples)
+        sample_count = int(sampling["sampleCount"])
         base = (self.valves.rf_terrain_api_base or "").strip().rstrip("/")
         if not (base.startswith("https://") or base.startswith("http://")):
             raise ValueError("rf_terrain_api_base must begin with http:// or https://")
@@ -1136,7 +1229,7 @@ class Tools:
                 "interpolation": "bilinear",
             }
         ).encode("utf-8")
-        request = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json", "User-Agent": "MeshOps-RF/0.4.0"}, method="POST")
+        request = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json", "User-Agent": "MeshOps-RF/0.4.1"}, method="POST")
         try:
             with urllib.request.urlopen(request, timeout=float(self.valves.rf_terrain_timeout_seconds)) as response:
                 body = response.read().decode("utf-8")
@@ -1165,8 +1258,13 @@ class Tools:
             "provider": base,
             "datasetRequest": dataset,
             "sampleCount": len(points),
+            "sampling": sampling,
             "points": points,
-            "privacyNote": "Endpoint coordinates were sent to the configured terrain API because external terrain requests were enabled.",
+            "privacyNote": (
+                "Endpoint coordinates were sent to the configured self-hosted terrain API."
+                if bool(self.valves.rf_terrain_self_hosted)
+                else "Endpoint coordinates were sent to the configured terrain API because terrain requests were enabled."
+            ),
         }
 
     def _rf_endpoint_antenna_asl(
@@ -1568,7 +1666,7 @@ class Tools:
                 "ok": True,
                 "result": {
                     "tool": "MeshOps - Meshtastic WiFi",
-                    "toolVersion": "0.4.0",
+                    "toolVersion": "0.5.0",
                     "meshtasticPythonVersion": meshtastic_version,
                     "host": self.valves.host,
                     "port": self.valves.port,
@@ -1583,11 +1681,21 @@ class Tools:
                         "nodeDbWrites": self.valves.allow_nodedb_writes,
                         "adminActions": self.valves.allow_admin_actions,
                         "interactiveConfirmation": self.valves.confirm_mutations,
+                        "meshTopology": True,
+                        "meshTopologyInteractiveRender": self.valves.topology_render_interactive,
+                        "meshTopologyVisJsSource": self.valves.topology_vis_js_source,
+                        "meshTopologyMaxNodes": self.valves.topology_max_nodes,
                         "rfPlanning": True,
                         "rfWholeMeshAnalysis": True,
                         "rfLocalInstallationProfile": self.valves.rf_use_local_installation_profile,
                         "rfExternalTerrainRequests": self.valves.rf_allow_external_terrain_requests,
-                        "rfPlanning": True,
+                        "rfTerrainSelfHosted": self.valves.rf_terrain_self_hosted,
+                        "rfTerrainSamplingMode": self.valves.rf_terrain_sampling_mode,
+                        "rfTerrainTargetSpacingM": self.valves.rf_terrain_target_spacing_m,
+                        "rfTerrainEffectiveMaxSamples": (
+                            self.valves.rf_terrain_max_samples if self.valves.rf_terrain_self_hosted
+                            else min(100, self.valves.rf_terrain_max_samples)
+                        ),
                     },
                 },
             }
@@ -1875,6 +1983,273 @@ class Tools:
             "Analysing Meshtastic mesh health…",
             "Mesh health analysis complete",
         )
+
+    def _topology_snr_style(self, snr: Optional[float]) -> Dict[str, Any]:
+        """Map an SNR reading to a colour/width pair. Bands are a generic LoRa
+        heuristic (roughly comfortable / workable / near the noise floor), not
+        a per-radio calibrated threshold - rf_analyse_link is the tool for that."""
+        if snr is None:
+            return {"color": "#8a8f98", "width": 1.0}
+        lo, hi = -20.0, 10.0
+        t = max(0.0, min(1.0, (float(snr) - lo) / (hi - lo)))
+        width = round(1.0 + t * 8.0, 2)
+        if snr >= -5.0:
+            color = "#3fbf5f"
+        elif snr >= -15.0:
+            color = "#e0a72e"
+        else:
+            color = "#d9534f"
+        return {"color": color, "width": width}
+
+    def _topology_render_html(self, graph: "nx.Graph", local_label: str, summary: Dict[str, Any]) -> str:
+        """Render a NodeDB-derived graph as a self-contained, interactive vis.js diagram."""
+        rings: Dict[int, List[str]] = {}
+        for node_id, attrs in graph.nodes(data=True):
+            if attrs.get("kind") == "local":
+                continue
+            hops = attrs.get("hopsAway")
+            ring = int(hops) if isinstance(hops, (int, float)) and hops >= 0 else 1
+            rings.setdefault(ring, []).append(node_id)
+
+        ring_spacing = 180.0
+        positions: Dict[str, Tuple[float, float]] = {"local": (0.0, 0.0)}
+        for ring, ids in sorted(rings.items()):
+            radius = ring_spacing * max(1, ring)
+            count = len(ids)
+            for i, node_id in enumerate(ids):
+                angle = (2 * math.pi * i / count) if count else 0.0
+                positions[node_id] = (radius * math.cos(angle), radius * math.sin(angle))
+
+        net = Network(
+            height="600px",
+            width="100%",
+            bgcolor="#111318",
+            font_color="#e6e6e6",
+            cdn_resources="in_line" if str(self.valves.topology_vis_js_source).strip().casefold() == "in_line" else "remote",
+        )
+
+        lx, ly = positions["local"]
+        net.add_node(
+            "local",
+            label=local_label or "Local node",
+            title="This node",
+            shape="star",
+            color="#4f8ef7",
+            size=30,
+            x=lx,
+            y=ly,
+            fixed=True,
+            physics=False,
+            font={"color": "#e6e6e6", "size": 16},
+        )
+
+        for node_id, attrs in graph.nodes(data=True):
+            if attrs.get("kind") == "local":
+                continue
+            x, y = positions.get(node_id, (0.0, 0.0))
+            snr = attrs.get("snr")
+            battery = attrs.get("batteryLevel")
+            tooltip = [str(attrs.get("longName") or attrs.get("label") or node_id)]
+            if snr is not None:
+                tooltip.append(f"SNR: {snr} dB")
+            if attrs.get("hopsAway") is not None:
+                tooltip.append(f"Hops away: {attrs['hopsAway']}")
+            if battery is not None:
+                tooltip.append(f"Battery: {battery}%")
+            if attrs.get("viaMqtt"):
+                tooltip.append("Heard via MQTT (not RF)")
+            if attrs.get("lastHeardIsoUtc"):
+                tooltip.append(f"Last heard: {attrs['lastHeardIsoUtc']}")
+
+            node_color = "#9aa0a6"
+            if attrs.get("hopsAway") == 0 and not attrs.get("viaMqtt") and snr is not None:
+                node_color = self._topology_snr_style(snr)["color"]
+
+            net.add_node(
+                node_id,
+                label=str(attrs.get("label") or node_id),
+                title="\n".join(tooltip),
+                shape="dot",
+                size=16,
+                color=node_color,
+                x=x,
+                y=y,
+                fixed=True,
+                physics=False,
+                font={"color": "#e6e6e6"},
+            )
+
+        for u, v, attrs in graph.edges(data=True):
+            if attrs.get("measured"):
+                style = self._topology_snr_style(attrs.get("snr"))
+                net.add_edge(u, v, width=style["width"], color=style["color"], title=f"{attrs.get('snr')} dB (direct, measured)")
+            elif attrs.get("viaMqtt"):
+                net.add_edge(u, v, width=1.5, color="#5aa9e6", dashes=True, title="Heard via MQTT (not an RF link)")
+            else:
+                hops = attrs.get("hopsAway")
+                net.add_edge(u, v, width=1, color="#555a63", dashes=True, title=f"{hops} hops away - relay path unknown, run traceroute for the real path")
+
+        net.set_options(
+            json.dumps(
+                {
+                    "physics": {"enabled": False},
+                    "interaction": {"hover": True, "dragNodes": True, "zoomView": True, "tooltipDelay": 120},
+                    "edges": {"smooth": False},
+                }
+            )
+        )
+
+        html = net.generate_html(notebook=False)
+
+        legend = f"""
+<div style="position:absolute;left:12px;bottom:12px;background:rgba(20,22,28,0.88);
+     color:#e6e6e6;border:1px solid #333;border-radius:8px;padding:10px 14px;
+     font:12px/1.5 -apple-system,Segoe UI,sans-serif;max-width:260px;z-index:10;">
+  <div style="font-weight:600;margin-bottom:4px;">Mesh topology</div>
+  <div>{summary['nodeCount']} nodes shown &middot; {summary['directMeasuredLinks']} measured links</div>
+  <div style="margin-top:6px;">
+    <span style="color:#3fbf5f;">&#9644;</span> strong SNR &nbsp;
+    <span style="color:#e0a72e;">&#9644;</span> workable &nbsp;
+    <span style="color:#d9534f;">&#9644;</span> marginal
+  </div>
+  <div style="margin-top:4px;color:#9aa0a6;">Dashed = hop-count only or MQTT, not a measured RF link</div>
+</div>
+"""
+        return html.replace("</body>", legend + "\n</body>", 1)
+
+    async def get_mesh_topology(
+        self,
+        active_within_minutes: int = 60,
+        __event_emitter__=None,
+    ) -> str:
+        """
+        Render a network topology diagram of the local mesh, centred on this node.
+
+        Builds a NetworkX graph from NodeDB direct-hearing data (SNR, hop count,
+        MQTT vs RF, battery) and, when topology_render_interactive is enabled,
+        pushes an interactive vis.js diagram straight into the chat: edge
+        thickness and colour reflect measured signal strength, nodes are laid
+        out in rings by hop count, and the diagram stays pan/zoom/drag/hover
+        interactive.
+
+        Only hopsAway == 0 peers get a real "measured" edge, because a single
+        node's NodeDB does not reveal the actual multi-hop relay path - use
+        traceroute for that. Peers heard at 2+ hops are still shown, grouped
+        in outer rings, joined by a dashed "path unknown" edge so the diagram
+        stays readable without inventing a link that was never measured. This
+        tool never uses node position/lat-lon; layout is relative hop geometry
+        only, so redact_positions has no effect on it.
+        """
+        async with self._operation_lock:
+            await self._status(__event_emitter__, "Building Meshtastic mesh topology…", False)
+            try:
+                if active_within_minutes < 1 or active_within_minutes > 10080:
+                    raise ValueError("active_within_minutes must be between 1 and 10080")
+
+                def run() -> Tuple[Dict[str, Any], Optional[str]]:
+                    def op(iface: TCPInterface) -> Tuple[Dict[str, Any], Optional[str]]:
+                        now = int(time.time())
+                        my_info = iface.getMyNodeInfo() or {}
+                        my_num = my_info.get("num")
+                        my_user = my_info.get("user") or {}
+                        local_label = str(my_user.get("longName") or my_user.get("shortName") or "Local node")
+
+                        nodes = list((iface.nodes or {}).values())
+                        peers = [n for n in nodes if my_num is None or n.get("num") != my_num]
+                        active = [
+                            n
+                            for n in peers
+                            if int(n.get("lastHeard") or 0) > 0
+                            and now - int(n.get("lastHeard") or 0) <= active_within_minutes * 60
+                        ]
+                        active.sort(
+                            key=lambda n: (
+                                int(n.get("hopsAway")) if n.get("hopsAway") is not None else 99,
+                                -float(n.get("snr")) if n.get("snr") is not None else 0.0,
+                            )
+                        )
+                        active = active[: int(self.valves.topology_max_nodes)]
+
+                        graph = nx.Graph()
+                        graph.add_node("local", kind="local", label=local_label)
+
+                        links: List[Dict[str, Any]] = []
+                        for entry in active:
+                            user = entry.get("user") or {}
+                            node_id = str(user.get("id") or entry.get("num"))
+                            label = str(user.get("shortName") or user.get("longName") or node_id)
+                            hops = entry.get("hopsAway")
+                            snr = entry.get("snr")
+                            via_mqtt = bool(entry.get("viaMqtt"))
+                            battery = (entry.get("deviceMetrics") or {}).get("batteryLevel")
+                            is_direct = hops == 0 and not via_mqtt and snr is not None
+
+                            graph.add_node(
+                                node_id,
+                                kind="peer",
+                                label=label,
+                                longName=user.get("longName"),
+                                hopsAway=hops,
+                                snr=snr,
+                                viaMqtt=via_mqtt,
+                                batteryLevel=battery,
+                                lastHeardIsoUtc=self._timestamp_iso(entry.get("lastHeard")),
+                            )
+                            graph.add_edge("local", node_id, measured=is_direct, snr=snr, hopsAway=hops, viaMqtt=via_mqtt)
+
+                            link_type = "direct_measured" if is_direct else ("mqtt" if via_mqtt else "hop_count_only")
+                            links.append(
+                                {
+                                    "id": user.get("id"),
+                                    "name": user.get("longName"),
+                                    "hopsAway": hops,
+                                    "snrDb": snr,
+                                    "viaMqtt": via_mqtt,
+                                    "linkType": link_type,
+                                }
+                            )
+
+                        direct_snrs = [float(l["snrDb"]) for l in links if l["linkType"] == "direct_measured"]
+                        summary = {
+                            "windowMinutes": active_within_minutes,
+                            "nodeCount": len(active),
+                            "directMeasuredLinks": len(direct_snrs),
+                            "hopCountOnlyLinks": sum(1 for l in links if l["linkType"] == "hop_count_only"),
+                            "mqttOnlyLinks": sum(1 for l in links if l["linkType"] == "mqtt"),
+                            "strongestDirectSnrDb": max(direct_snrs) if direct_snrs else None,
+                            "weakestDirectSnrDb": min(direct_snrs) if direct_snrs else None,
+                            "links": self._clean_data(links),
+                            "note": (
+                                "Edges to hopsAway==0 peers are real measured SNR links. Peers at 2+ hops are "
+                                "grouped by hop count only - the NodeDB does not reveal the actual relay path; "
+                                "use traceroute for that. MQTT-only peers were not heard over RF."
+                            ),
+                        }
+
+                        html = None
+                        if self.valves.topology_render_interactive and active:
+                            html = self._topology_render_html(graph, local_label, summary)
+
+                        return summary, html
+
+                    return self._with_interface(op)
+
+                summary, html = await asyncio.to_thread(run)
+
+                if html and __event_emitter__:
+                    try:
+                        await __event_emitter__({"type": "message", "data": {"content": "\n```html\n" + html + "\n```\n"}})
+                    except Exception:
+                        pass
+
+                await self._status(__event_emitter__, "Mesh topology diagram ready", True)
+                return self._json({"ok": True, "result": summary, "diagramRendered": bool(html)})
+            except SystemExit as exc:
+                await self._status(__event_emitter__, "Mesh topology failed", True)
+                return self._json({"ok": False, "error": "Meshtastic library aborted the operation", "details": str(exc)})
+            except Exception as exc:
+                await self._status(__event_emitter__, "Mesh topology failed", True)
+                return self._json({"ok": False, "error": type(exc).__name__, "details": str(exc)})
 
     async def rf_analyse_link(
         self,

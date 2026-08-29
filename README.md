@@ -117,6 +117,12 @@ It can request telemetry, inspect the NodeDB, manage channels and configuration,
 - **Regulatory awareness**: encoded region table with power/duty/spacing limits for planning checks
 - **Modem preset awareness**: documented link budgets and live SF/bandwidth/CR mapping
 
+### Mesh Visualisation (new in v0.5.0)
+
+- **Interactive mesh topology diagram**: `get_mesh_topology` renders a NetworkX-built, vis.js-interactive network graph directly in chat - pan, zoom, drag and hover for detail
+- **Signal-weighted edges**: line thickness and colour reflect measured SNR (green/amber/red)
+- **Honest about what's measured**: only directly-heard (`hopsAway == 0`) peers get a real edge; multi-hop peers are grouped by hop count with a clearly dashed "path unknown" edge rather than an invented link
+
 <p align="right">(<a href="#top">back to top</a>)</p>
 
 ## Safety & Permissions
@@ -154,6 +160,8 @@ Additional safety notes:
 - [Pydantic](https://docs.pydantic.dev/) - Valves validation
 - [Protocol Buffers](https://protobuf.dev/) - Meshtastic mesh/channel/telemetry protos
 - [OpenTopoData](https://www.opentopodata.org/) - optional terrain elevation API
+- [NetworkX](https://networkx.org/) - mesh topology graph model
+- [pyvis](https://pyvis.readthedocs.io/) - interactive vis.js network diagram rendering
 
 <p align="right">(<a href="#top">back to top</a>)</p>
 
@@ -163,10 +171,10 @@ Additional safety notes:
 
 1. A running [Open WebUI](https://open-webui.com/) instance
 2. A Meshtastic node reachable from the Open WebUI server over TCP/Wi-Fi (normally port **4403**)
-3. The Meshtastic Python package installed in the Open WebUI environment:
+3. The required Python packages installed in the Open WebUI environment:
 
    ```bash
-   pip install meshtastic==2.7.11
+   pip install meshtastic==2.7.11 networkx==3.4.2 pyvis==0.3.2
    ```
 
 ### Installation
@@ -252,6 +260,16 @@ Plan a 5 km link at my current LoRa settings - what additional gain do I need?
 Analyse my whole mesh for interesting RF paths
 ```
 
+### Mesh Visualisation
+
+```
+Show me a diagram of my mesh topology
+```
+
+```
+Draw the network graph for nodes active in the last 2 hours
+```
+
 <p align="right">(<a href="#top">back to top</a>)</p>
 
 ## RF Planning
@@ -313,6 +331,14 @@ RF tools can optionally use **terrain elevation data** to help identify obstruct
 | `rf_local_measured_tx_power_dbm` | `-9999` | Measured conducted TX power (unknown = -9999) |
 | `rf_remote_profiles_json` | `{}` | JSON object of known remote node RF data |
 
+### Mesh Topology
+
+| Valve | Default | Description |
+|---|---|---|
+| `topology_max_nodes` | `60` | Max NodeDB peers included in the diagram |
+| `topology_render_interactive` | `True` | Push the interactive vis.js diagram into chat |
+| `topology_vis_js_source` | `remote` | `remote` (small, CDN-loaded) or `in_line` (self-contained, ~700 KB) |
+
 ### Terrain (opt-in)
 
 | Valve | Default | Description |
@@ -336,7 +362,7 @@ See the [Safety & Permissions](#safety--permissions) table above.
 
 - [ ] Add support for newer Meshtastic Python SDK versions
 - [ ] Additional RF analysis (interference modelling, multi-hop path planning)
-- [ ] Graph/visualisation outputs for mesh health
+- [x] Graph/visualisation outputs for mesh health
 - [ ] Persistent message history capture
 - [ ] Channel import/export workflows
 - [ ] Additional hardware model hints for RF planning
@@ -406,3 +432,13 @@ See [CHANGELOG.md](CHANGELOG.md) for version history.
 [openwebui-tool-url]: https://openwebui.com/posts/d61541f8-9291-4d30-830a-77aff6b03add
 [reddit-shield]: https://img.shields.io/badge/Reddit-r%2Fmeshtastic-FF4500.svg
 [reddit-url]: https://www.reddit.com/r/meshtastic/comments/1vp70wf/openwebui_meshtastic_tool/
+
+## Trademark Notice
+
+Meshtastic® is a registered trademark of Meshtastic LLC.
+
+LoRa Mesh Assistant is an independent community project and is not affiliated with, sponsored by, or endorsed by Meshtastic LLC.
+
+The Meshtastic M-Powered logo is used to indicate compatibility with Meshtastic and remains the property of its respective trademark owner.
+
+Open WebUI and any associated marks remain the property of their respective owners.

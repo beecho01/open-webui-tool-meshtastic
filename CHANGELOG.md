@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] — 2026-08-29
+
+### Added
+- **Mesh topology diagram** — `get_mesh_topology` builds a NetworkX graph from live NodeDB data and renders it as an interactive vis.js diagram pushed directly into the chat:
+  - Edge thickness and colour reflect measured SNR (green/amber/red)
+  - Nodes laid out in rings by hop count, centred on the local node
+  - Only `hopsAway == 0` peers get a real "measured" edge; multi-hop peers are shown with a clearly-labelled dashed "path unknown" edge rather than an invented link, since a single node's NodeDB cannot reveal the actual relay path (use `traceroute` for that)
+  - Diagram stays pan/zoom/drag/hover interactive in the rendered preview
+  - Does not use node position/lat-lon; layout is relative hop geometry only
+- `topology_max_nodes` Valve — caps how many NodeDB peers are included in the diagram
+- `topology_render_interactive` Valve — toggle the interactive diagram on/off independently of the JSON summary
+- `topology_vis_js_source` Valve — `remote` (small, CDN-loaded) or `in_line` (fully self-contained, ~700 KB) vis-network delivery
+
+### Changed
+- `get_tool_info` now reports mesh topology capability gates
+
+---
+
 ## [0.4.1] — 2026-08-29
 
 ### Added
