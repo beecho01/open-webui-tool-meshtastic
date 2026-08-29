@@ -8,15 +8,9 @@
 
 <br />
 <div align="center">
-  <p>
-    <a href="https://meshtastic.org/">
-      <img src="https://meshtastic.org/img/logo.svg" alt="Meshtastic" height="100">
-    </a>
+    <img src="https://meshtastic.org/img/logo.svg" alt="Meshtastic" height="100">
     &nbsp;&nbsp;&nbsp;&nbsp;
-    <a href="https://open-webui.com/">
-      <img src="https://docs.openwebui.com/assets/files/open-webui-logo-a5024b13d950315f75cf406700bbd404.png" style="border-radius: 12.5px" alt="Open WebUI" height="100">
-    </a>
-  </p>
+    <img src="https://docs.openwebui.com/assets/files/open-webui-logo-a5024b13d950315f75cf406700bbd404.png" style="border-radius: 12.5px;" alt="Open WebUI" height="100">
 
   <h3>Meshtastic - Conversational Mesh Diagnostics &amp; RF Planning for Open WebUI</h3>
 
