@@ -7,17 +7,18 @@
 [![Reddit][reddit-shield]][reddit-url]
 
 <br />
+<br />
 <div align="center">
-    <img src="https://meshtastic.org/img/logo.svg" alt="Meshtastic" height="100">
-    &nbsp;&nbsp;&nbsp;&nbsp;
-    <img src="https://docs.openwebui.com/assets/files/open-webui-logo-a5024b13d950315f75cf406700bbd404.png" style="border-radius: 12.5px;" alt="Open WebUI" height="100">
 
-  <h3>Meshtastic - Conversational Mesh Diagnostics &amp; RF Planning for Open WebUI</h3>
+  <h1>LoRa Mesh Assistant</h1>
+
+  <h3>Conversational Diagnostics &amp; RF Planning for Meshtastic®</h3>
 
   <p>
     An Open WebUI Workspace Tool that gives an LLM direct, safe access to a Meshtastic node over Wi-Fi/TCP.
     Ask your local model how your mesh is doing, run traceroutes, inspect telemetry, manage configuration,
     and plan RF links - all conversationally.
+    <br />
     <br />
     <a href="https://github.com/beecho01/open-webui-tool-meshtastic"><strong>Explore the docs »</strong></a>
     <br />
