@@ -108,7 +108,7 @@ It can request telemetry, inspect the NodeDB, manage channels and configuration,
 - **Position management**: set or remove a fixed device position
 - **Device administration**: sync clock, reboot, shutdown (factory reset / DFU deliberately excluded)
 
-### RF Planning (new in v0.4.1)
+### RF Planning
 
 - **Link analysis**: link budget, Fresnel clearance, radio horizon using live LoRa settings
 - **Link planning**: target a distance and get the additional system gain required
@@ -117,10 +117,13 @@ It can request telemetry, inspect the NodeDB, manage channels and configuration,
 - **Regulatory awareness**: encoded region table with power/duty/spacing limits for planning checks
 - **Modem preset awareness**: documented link budgets and live SF/bandwidth/CR mapping
 
-### Mesh Visualisation (new in v0.5.0)
+### Mesh Visualisation
 
-- **Interactive mesh topology diagram**: `get_mesh_topology` renders a NetworkX-built, vis.js-interactive network graph directly in chat - pan, zoom, drag and hover for detail
+- **Interactive mesh topology diagram**: `get_mesh_topology` renders a NetworkX-built, vis.js-interactive network graph directly in chat as a sandboxed inline embed - pan, zoom and hover for detail
 - **Signal-weighted edges**: line thickness and colour reflect measured SNR (green/amber/red)
+- **Concentric hop-count rings**: nodes are laid out in rings by hop count with visible ring guides, centred on the local node (innermost = directly heard)
+- **Theme-aware rendering**: the diagram follows Open WebUI's dark/light/OLED theme in real time, with CSS-variable-driven colours for background, fonts and legend
+- **Persistent embed**: the diagram is delivered as an inline Open WebUI embed (`message.embeds`) that survives message-content overwrite and persists across chat reloads
 - **Honest about what's measured**: only directly-heard (`hopsAway == 0`) peers get a real edge; multi-hop peers are grouped by hop count with a clearly dashed "path unknown" edge rather than an invented link
 
 <p align="right">(<a href="#top">back to top</a>)</p>
@@ -162,6 +165,7 @@ Additional safety notes:
 - [OpenTopoData](https://www.opentopodata.org/) - optional terrain elevation API
 - [NetworkX](https://networkx.org/) - mesh topology graph model
 - [pyvis](https://pyvis.readthedocs.io/) - interactive vis.js network diagram rendering
+- [Starlette](https://www.starlette.io/) - `HTMLResponse` for inline embed delivery
 
 <p align="right">(<a href="#top">back to top</a>)</p>
 
@@ -183,7 +187,7 @@ Additional safety notes:
 
 2. In Open WebUI, navigate to **Workspace → Tools**
 
-3. Click **Import Tool** and select the downloaded `.py` file (e.g. `meshtastic_0.4.1.py`)
+3. Click **Import Tool** and select the downloaded `.py` file (e.g. `meshtastic_0.5.8.py`)
 
 4. Open the tool's **Valves** and set your Meshtastic device's IP or hostname:
 
@@ -324,6 +328,7 @@ RF tools can optionally use **terrain elevation data** to help identify obstruct
 | Valve | Default | Description |
 |---|---|---|
 | `rf_use_local_installation_profile` | `False` | Use local antenna/cable/height defaults |
+| `rf_local_installation_name` | `""` | Optional human-readable name for the local installation |
 | `rf_local_antenna_gain_dbi` | `0.0` | Local antenna gain |
 | `rf_local_cable_loss_db` | `0.0` | Local feedline/connector loss |
 | `rf_local_antenna_height_m_agl` | `0.0` | Local antenna height above ground |
@@ -336,7 +341,7 @@ RF tools can optionally use **terrain elevation data** to help identify obstruct
 | Valve | Default | Description |
 |---|---|---|
 | `topology_max_nodes` | `60` | Max NodeDB peers included in the diagram |
-| `topology_render_interactive` | `True` | Push the interactive vis.js diagram into chat |
+| `topology_render_interactive` | `True` | Deliver the interactive vis.js diagram as an inline embed in chat |
 | `topology_vis_js_source` | `remote` | `remote` (small, CDN-loaded) or `in_line` (self-contained, ~700 KB) |
 
 ### Terrain (opt-in)
@@ -349,7 +354,10 @@ RF tools can optionally use **terrain elevation data** to help identify obstruct
 | `rf_terrain_self_hosted` | `False` | Treat API as self-hosted |
 | `rf_terrain_sampling_mode` | `adaptive` | `adaptive` or `fixed` |
 | `rf_terrain_target_spacing_m` | `25.0` | Target sample spacing (adaptive) |
+| `rf_terrain_min_samples` | `64` | Min samples (adaptive mode) |
 | `rf_terrain_max_samples` | `2000` | Max samples (self-hosted) |
+| `rf_terrain_samples` | `64` | Fixed sample count (`fixed` mode) |
+| `rf_terrain_timeout_seconds` | `10.0` | Terrain API request timeout |
 | `rf_earth_k_factor` | `1.333` | Effective Earth radius factor |
 
 ### Safety & Permissions

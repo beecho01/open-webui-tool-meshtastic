@@ -5,6 +5,66 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.8] — 2026-09-04
+
+### Changed
+- **Topology diagram legend restyled** — the floating overlay legend is now a bottom-anchored bar with flex-wrap layout, using theme-aware CSS variables for consistent contrast in both light and dark modes
+- **Node dragging disabled** in the topology diagram (`dragNodes: false`) so ring position always reflects hop count at a glance; pan and zoom remain interactive
+- Ring guide lines use solid strokes with increased opacity for better visibility
+
+### Fixed
+- Ring spacing calculation corrected so all hop-count rings use consistent `ring_spacing * (ring + 1)` geometry
+
+
+---
+
+
+## [0.5.7] — 2026-09-03
+
+### Added
+- **Live theme detection** for the topology diagram — the embed now follows Open WebUI's theme (dark/light/OLED) in real time via `MutationObserver`, `matchMedia`, and `storage` events, falling back to OS `prefers-color-scheme` when the iframe cannot read the parent
+- **`applyMeshTheme` function** — theme changes dynamically update node font colours and redraw the network without reloading the diagram
+
+### Changed
+- Ring guide lines use solid strokes with higher opacity (`0.16`/`0.14`) instead of dashed lines
+- Theme script and chrome-strip CSS injected into `<head>` for proper load ordering
+
+
+---
+
+
+## [0.5.6] — 2026-09-02
+
+### Added
+- **Theme-aware topology diagram** — the vis.js embed now detects and follows the Open WebUI theme (dark/light/OLED) via parent DOM inspection, `localStorage`, and `prefers-color-scheme` fallback
+- **CSS variable theming** — diagram background, font colour, legend background, border, and muted text all use `--mesh-*` CSS custom properties with light-mode overrides
+- Node font colours updated dynamically on initial render based on detected theme
+
+### Changed
+- Bootstrap card chrome stripping now uses theme-aware CSS variables instead of hardcoded dark colours
+- Legend uses theme-aware `var(--mesh-*)` colours instead of hardcoded values
+
+
+---
+
+
+## [0.5.5] — 2026-09-01
+
+### Added
+- **Inline Open WebUI embed delivery** — `get_mesh_topology` now returns `(HTMLResponse, result_payload)` instead of emitting HTML via `__event_emitter__` message events, so the interactive diagram is rendered as a sandboxed, script-enabled iframe (`message.embeds`) that survives message-content overwrite at response completion and persists across chat reloads
+- **Concentric ring guides** — hop-count rings are now drawn as dashed canvas circles behind the network via a `beforeDrawing` hook, making the hop geometry visually explicit
+- **Bootstrap chrome stripping** — pyvis's card/frame wrapper CSS is overridden so the diagram fills the embed iframe edge-to-edge
+- **Floating legend overlay** — a positioned legend showing node count, measured link count, SNR colour key, and ring meaning
+- `starlette` added to imports for `HTMLResponse`
+
+### Changed
+- `get_mesh_topology` return type annotation changed from `str` to `Any` to reflect the tuple return
+- Tool docstring updated to explain the embed delivery model and that the model should describe the mesh from the JSON summary rather than reproducing the diagram
+
+
+---
+
+
 ## [0.5.0] — 2026-08-29
 
 ### Added
